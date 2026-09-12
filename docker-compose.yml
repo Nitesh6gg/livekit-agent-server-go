@@ -1,0 +1,15 @@
+services:
+  agent:
+    build: .
+    env_file:
+      - .env
+    # The worker is itself a WebRTC participant (it does its own ICE/RTP, not
+    # just signaling), so bridged Docker networking breaks NAT traversal for
+    # the UDP media path. Host networking is required on the Debian box.
+    # Docker Desktop on Windows does not support host networking the same
+    # way; use the `ports` block below instead for local dev.
+    network_mode: host
+    # ports:
+    #   - "8080:8080"   # ops: /healthz, /metrics — use instead of network_mode
+    #                    # on hosts where host networking isn't available
+    restart: unless-stopped

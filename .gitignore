@@ -1,0 +1,26 @@
+# Build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Go
+/vendor/
+go.work
+go.work.sum
+
+# Logs & profiling
+*.log
+*.pprof
+/profiles/
+
+# Editor
+.idea/
+.vscode/
+.DS_Store

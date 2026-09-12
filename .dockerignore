@@ -1,0 +1,14 @@
+.git
+.idea
+.vscode
+bin/
+dist/
+*.log
+*.pprof
+profiles/
+.env
+.env.*
+!.env.example
+docs/
+README.md
+problemStatement.md
