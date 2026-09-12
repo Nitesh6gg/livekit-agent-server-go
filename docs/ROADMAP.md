@@ -52,8 +52,8 @@ Build the minimum that runs **one real conversation** and instrument it.
 **Amended by [ADR-019](DECISIONS.md#adr-019).** The baseline is Node at 7.07
 calls/core, not Pipecat at 5–6 — the rewrite must beat the best available option,
 not the one being retired. Three preconditions now apply before this gate may be
-answered at all: in-process end-of-turn parity (item 1–2 below), the bar restated
-above, and **item 3 reordered ahead of items 2 and 4** — a pprof CPU split of native
+answered at all: in-process end-of-turn parity (items 1–2 above), the bar restated
+in the table, and **item 3 reordered ahead of items 2 and 4** — a pprof CPU split of native
 inference vs. orchestration bounds the achievable density before more code is
 written, and can answer the gate cheaply with a "stop".
 
