@@ -20,6 +20,11 @@ go.work.sum
 *.pprof
 /profiles/
 
+# Benchmark output: raw samples, profiles and generated compose overrides.
+# summary.md and ablation.csv are worth keeping when a run informs a decision —
+# copy those into docs/ or attach them to the ADR rather than committing the tree.
+/bench/results/
+
 # Editor
 .idea/
 .vscode/

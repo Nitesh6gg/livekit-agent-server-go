@@ -64,6 +64,21 @@ type Config struct {
 	// Runtime
 	LogLevel string
 	HTTPAddr string
+
+	// Exposes net/http/pprof on the ops server. Defaults to ON: Phase 1 exists to
+	// produce the numbers in METRICS.md ([ADR-004](../docs/DECISIONS.md)), and the
+	// CPU profile is one of them. Turn it off before this ever faces a network it
+	// doesn't own — pprof will dump the command line, goroutine stacks and heap to
+	// anyone who can reach the port, and /debug/pprof/profile is a free way to make
+	// the worker do 30 seconds of work on request.
+	//
+	// Note what pprof cannot tell you here: Go's CPU profiler does not unwind C
+	// stacks, so time inside sherpa-onnx (ONNX inference) and libopus/soxr (codec,
+	// resampling) collapses into runtime.cgocall rather than breaking down. Both are
+	// cgo. It is therefore blind to exactly the cost that decides Gate 1, and biased
+	// in Go's favour. bench/ablate.sh exists because of this: it measures the native
+	// cost by difference instead of by attribution.
+	PprofEnabled bool
 }
 
 // Load reads configuration from the environment, first loading a .env file
@@ -107,6 +122,8 @@ func Load() (*Config, error) {
 
 		LogLevel: getenv("LOG_LEVEL", "info"),
 		HTTPAddr: getenv("HTTP_ADDR", ":8080"),
+
+		PprofEnabled: getenvBool("PPROF_ENABLED", true),
 	}
 
 	var missing []string

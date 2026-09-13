@@ -8,6 +8,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/http/pprof"
 	"os/signal"
 	"syscall"
 	"time"
@@ -39,7 +40,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go serveOps(cfg.HTTPAddr)
+	go serveOps(cfg.HTTPAddr, cfg.PprofEnabled)
 
 	// STT: connect first so we can forward caller audio as soon as it arrives.
 	sttClient := stt.New(stt.Config{
@@ -170,10 +171,10 @@ func main() {
 	log.Println("shutting down")
 }
 
-// serveOps exposes health and metrics on the stdlib HTTP server. Prometheus is
-// used for the metrics format and collectors only — there is still no web
-// framework here (see docs/DECISIONS.md ADR-006).
-func serveOps(addr string) {
+// serveOps exposes health, metrics and (optionally) pprof on the stdlib HTTP
+// server. Prometheus is used for the metrics format and collectors only — there is
+// still no web framework here (see docs/DECISIONS.md ADR-006).
+func serveOps(addr string, enablePprof bool) {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(
 		// process_cpu_seconds_total and process_resident_memory_bytes are the
@@ -191,6 +192,21 @@ func serveOps(addr string) {
 	})
 	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 
+	// Registered explicitly rather than by importing net/http/pprof for its side
+	// effect: that import installs the handlers on http.DefaultServeMux, which this
+	// server deliberately does not use. pprof.Index also serves the named profiles
+	// (heap, goroutine, allocs, block, mutex, threadcreate) under the same prefix.
+	if enablePprof {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		log.Printf("pprof enabled at %s/debug/pprof/ — disable with PPROF_ENABLED=false", addr)
+	}
+
+	// No WriteTimeout on purpose: /debug/pprof/profile?seconds=N streams for N
+	// seconds and a write deadline would truncate every profile longer than it.
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,

@@ -4,7 +4,7 @@
 BINARY := bin/agent
 PKG    := ./cmd/agent
 
-.PHONY: build run tidy fmt vet test clean
+.PHONY: build run tidy fmt vet test clean ablate
 
 build: ## Compile the agent binary into ./bin
 	go build -o $(BINARY) $(PKG)
@@ -26,3 +26,6 @@ test: ## Run tests
 
 clean: ## Remove build output
 	rm -rf bin dist
+
+ablate: ## Run the ADR-019 CPU ablation (needs CALLER_CMD — see bench/README.md)
+	bash bench/ablate.sh
