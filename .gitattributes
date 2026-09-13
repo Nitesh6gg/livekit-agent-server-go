@@ -1,0 +1,16 @@
+# core.autocrlf=true is set globally on the Windows dev box, so without this the
+# working-tree copies of these files get CRLF on checkout. They are then scp'd to
+# the Debian hosts and run there, where a CRLF first line makes bash fail with
+# "$'\r': command not found" and Docker misparse a directive. Keep them LF
+# everywhere; the files are authored and consumed on Linux regardless of where
+# they are edited.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+
+# gofmt emits LF and the Go toolchain expects it.
+*.go        text eol=lf
+
+# ONNX models are binary — never touch them.
+*.onnx      binary
