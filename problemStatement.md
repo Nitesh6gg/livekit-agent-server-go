@@ -1,5 +1,30 @@
 # Problem Statement — Go Voice Agent Worker
 
+> [!IMPORTANT]
+> **Historical document, kept for provenance.** This is the original HLD. Several of
+> its load-bearing numbers and technology choices have since been superseded by
+> measurement — most importantly the density arithmetic in §3A, which the entire cost
+> case rests on. Corrections are tabulated below. The authoritative record is
+> [docs/DECISIONS.md](docs/DECISIONS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## Superseded by measurement
+
+| This document says | Current position | Record |
+|---|---|---|
+| Go workers reach **100+ calls/vCPU** (§3A), cutting compute ~90% | Unsupported by any measurement. The incumbent Node/LiveKit stack measures **7.07 calls/core** at 85 concurrent rooms; the bar Go must clear is **≥14**. The 2–4 KB goroutine-stack argument addresses *memory*, not CPU — and per-call CPU is dominated by ONNX inference and Opus codec work in native C, identical in either language. | [ADR-019](docs/DECISIONS.md#adr-019) |
+| Pipecat is limited to **3–4 calls/process** (§1) — and separately, **10–12 calls/vCPU** (§3A) | Internally inconsistent, and both understate it. Dograh/Pipecat measures **5–6 calls/core**. Understating the incumbent inflates the case for the rewrite. | [ADR-019](docs/DECISIONS.md#adr-019) |
+| Agent worker pool built on **`am-sokolov/livekit-agent-sdk-go`** (§2, §3B) | Rejected before implementation, and the deferred revisit is now closed: last commit ~11 months ago, 8 stars, 4 forks. The official `server-sdk-go` is used instead, and there is **no job dispatch at all yet** — the worker joins rooms manually. | [ADR-001](docs/DECISIONS.md#adr-001) |
+| STT via **Deepgram/AssemblyAI**, TTS via **Cartesia/ElevenLabs** (§3B) | Sarvam for both. The product is Indian-language voice, and measuring on English-optimised providers produces latency and quality numbers that do not transfer to production. §4 of this document already says Sarvam. | [ADR-002](docs/DECISIONS.md#adr-002) |
+| The pipeline is **4 goroutines** (§3B) | Missing the stage that matters most for density: in-process TEN VAD, optionally with GTCRN speech enhancement. That native inference is a large share of per-call CPU, and is the main reason §3A's figure does not hold. | [ADR-018](docs/DECISIONS.md#adr-018) |
+| Barge-in **cancels streams in <10 ms** (§3C) | Unmeasured, and not how it works. TTS audio is filtered by generation at playback rather than stopped at the source, gated on real playout state — cancelling the stream alone does not stop audio already in flight. | [ADR-015](docs/DECISIONS.md#adr-015) |
+| Target **sub-500 ms** end-to-end latency (§4) | Not met by either stack. Gate 1 now uses Node parity (~2,427 ms p95) as its condition; the earlier ≤800 ms placeholder was unmet by both stacks and so could not discriminate between them. | [METRICS.md](docs/METRICS.md) |
+
+**What still stands:** the 5,000-call target, the three-layer decoupling, and the
+phased structure. What changed is the density arithmetic underneath them — and Gate 1
+is now explicitly allowed to kill the rewrite if measurement does not support it.
+
+---
+
 **Contents:** [1. Core Problem & Goal](#core-problem) · [2. Selected Tech Stack Overview](#tech-stack) · [3. Key Technical Decisions & Architectural Insights](#key-decisions) · [4. Phased Rollout Roadmap](#roadmap)
 
 ---
