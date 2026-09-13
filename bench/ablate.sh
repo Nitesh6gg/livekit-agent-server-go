@@ -82,7 +82,7 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT_DIR="$SCRIPT_DIR/results/$RUN_ID"
 mkdir -p "$OUT_DIR"
 CSV="$OUT_DIR/ablation.csv"
-echo "run,vad,gtcrn,call_seconds,cpu_seconds,cpu_s_per_call_min,cores_per_call,rss_start_mb,rss_peak_mb,goroutines_peak,restarts" >"$CSV"
+echo "run,vad,gtcrn,call_seconds,cpu_seconds,cpu_s_per_call_min,cores_per_call,rss_start_mb,rss_peak_mb,goroutines_peak,transcripts,restarts" >"$CSV"
 
 echo "=== Ablation run $RUN_ID ==="
 echo "Runner: $RUNNER   duration: ${DURATION}s/run   settle: ${SETTLE}s   runs: $RUNS"
@@ -250,17 +250,48 @@ for run in $RUNS; do
     echo "       process_cpu_seconds_total reset, so this row is void. Check $OUT_DIR/$run-worker.log." >&2
   fi
 
+  # Capture the agent's own log BEFORE stop_worker: `docker compose down` removes
+  # the container, and with it every transcript this run produced. Without this the
+  # SUSPECT warning tells you to go check evidence that no longer exists.
+  AGENT_LOG="$OUT_DIR/$run-agent.log"
+  if [ "$RUNNER" = "compose" ]; then
+    docker compose -f "$REPO_DIR/docker-compose.yml" ${OVERRIDE_FILE:+-f "$OVERRIDE_FILE"} \
+      logs --no-color "$COMPOSE_SERVICE" >"$AGENT_LOG" 2>&1 || true
+  else
+    AGENT_LOG="$OUT_DIR/$run-worker.log"
+  fi
+
+  # Assert the call actually happened, and abort the whole ramp if it did not.
+  # Measuring an idle worker four times takes 15 minutes and produces a table that
+  # looks entirely plausible — the first run of this harness did exactly that,
+  # because CALLER_CMD pointed at a path that did not exist and `lk` exited without
+  # publishing. Failing here costs one step instead of the full ramp.
+  transcripts=0
+  if [ -f "$AGENT_LOG" ]; then
+    transcripts="$(grep -cE 'stt: TRANSCRIPT' "$AGENT_LOG" 2>/dev/null || true)"
+    transcripts="${transcripts:-0}"
+  fi
+  if [ "$with_call" -eq 1 ] && [ "$transcripts" -eq 0 ]; then
+    echo "  FAIL run $run produced no transcripts — the caller published nothing." >&2
+    echo "       Check $OUT_DIR/$run-caller.log (a missing --publish file shows up there" >&2
+    echo "       as a 'stat ...: no such file or directory' line after 'connected to room')." >&2
+    echo "       Aborting rather than measuring an idle worker for the rest of the ramp." >&2
+    stop_worker
+    exit 1
+  fi
+  [ "$with_call" -eq 1 ] && echo "  ($transcripts transcript(s) this run)"
+
   peak_rss="$(awk -F, 'NR>1 && $3>m {m=$3} END {print m+0}' "$PEAK_FILE")"
   peak_gor="$(awk -F, 'NR>1 && $4>m {m=$4} END {print m+0}' "$PEAK_FILE")"
 
   awk -v run="$run" -v vad="$vad" -v gtcrn="$gtcrn" -v dur="$DURATION" \
       -v c0="$cpu0" -v c1="$cpu1" -v r0="$rss0" -v rp="$peak_rss" \
-      -v gp="$peak_gor" -v rs="$restarts_after" '
+      -v gp="$peak_gor" -v tr="$transcripts" -v rs="$restarts_after" '
     BEGIN {
       cpu = c1 - c0
       permin = (dur > 0) ? cpu / (dur / 60.0) : 0
-      printf "%s,%s,%s,%d,%.3f,%.3f,%.4f,%.1f,%.1f,%d,%s\n",
-        run, vad, gtcrn, dur, cpu, permin, permin/60.0, r0/1048576, rp/1048576, gp, rs
+      printf "%s,%s,%s,%d,%.3f,%.3f,%.4f,%.1f,%.1f,%d,%d,%s\n",
+        run, vad, gtcrn, dur, cpu, permin, permin/60.0, r0/1048576, rp/1048576, gp, tr, rs
     }' >>"$CSV"
 
   tail -1 "$CSV" | awk -F, '{ printf "  cpu %.2fs over %ss = %.2f cpu-s/call-min (%.3f cores/call), rss peak %.0fMB\n", $5, $4, $6, $7, $9 }'
@@ -339,6 +370,11 @@ SUMMARY="$OUT_DIR/summary.md"
   echo "  in-process; this worker still delegates endpointing to Sarvam (ROADMAP item 1)."
   echo "  ADR-019 precondition 1: bring them to parity — cheapest by running Node without"
   echo "  its turn detector — before quoting any ratio."
+  echo "- **Check the \`transcripts\` column before trusting any difference.** The"
+  echo "  subtraction is only valid if A, B and C did the same amount of work. Counts"
+  echo "  within a few turns of each other are fine; a run with noticeably fewer turns"
+  echo "  synthesized less speech and called the LLM fewer times, so its \"saving\" is"
+  echo "  partly just work that never happened."
   echo "- **Single call.** This measures per-call cost at N=1, not contention at N=200."
   echo "  Density needs many concurrent pipelines (ROADMAP item 4)."
   echo "- **Idle subtraction assumes VAD/GTCRN cost ~0 with no audio arriving.** They are"

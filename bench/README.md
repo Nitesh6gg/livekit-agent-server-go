@@ -51,8 +51,10 @@ that looks successful and measures an idle worker four times.
 # verify the flags for your CLI version first
 lk room join --help
 
+# the room is a POSITIONAL argument, not --room. `--room agent-spike-1` makes lk
+# connect to the wrong room and publish where nothing is listening.
 export CALLER_CMD='lk room join --identity bench-caller \
-    --publish /root/bench/hindi-speech-loop.ogg --room agent-spike-1'
+    --publish /root/go-agent-worker/bench/caller.ogg agent-spike-1'
 
 bash bench/ablate.sh
 ```
@@ -74,24 +76,46 @@ no LLM or TTS turn ever runs — you would measure a pipeline that never did its
 | `OPS_URL` | `http://127.0.0.1:8080` | must match `HTTP_ADDR` |
 
 Writes `bench/results/<run-id>/` containing `ablation.csv`, `summary.md`, per-run
-sample CSVs, worker and caller logs, and `*-cpu.pprof` / `*-heap.pprof`.
+sample CSVs, caller logs, the agent's own log (`<run>-agent.log`, captured before the
+container is destroyed), and `*-cpu.pprof` / `*-heap.pprof`.
+
+**The ramp aborts after any call run that produced zero transcripts**, rather than
+continuing for another ten minutes. That failure is not hypothetical: the first real
+run of this harness measured an idle worker four times because `CALLER_CMD` pointed at
+a path that did not exist, and `lk` exited without publishing — a mistake visible only
+in `<run>-caller.log` as `stat ...: no such file or directory` right after
+`connected to room`.
+
+**Use an absolute path in `CALLER_CMD`.** It is evaluated from the repo root, so a
+relative path that works when you type it by hand in `bench/` will not resolve here.
+
+To read a captured profile:
 
 ```bash
 go tool pprof -http=:9000 bench/results/<run-id>/C-cpu.pprof
+
+# or, with no Go toolchain on the box:
+docker run --rm -v "$PWD:/w" -w /w golang:1.26-bookworm \
+  go tool pprof -top -nodecount=30 /w/idle-cpu.pprof
 ```
 
 ## Reading the result
 
-`summary.md` prints the derived split and an implied density. Check three things
+`summary.md` prints the derived split and an implied density. Check four things
 before believing any of it:
 
-1. **The SUSPECT warning.** If run `A` barely exceeded the idle floor, the caller
-   never published audio and every row is void. A live call runs STT streaming, an
-   LLM turn and TTS synthesis; it cannot cost almost nothing.
-2. **The restart column.** A non-zero change means the worker crashed mid-run,
+1. **The `transcripts` column.** Zero on a call run now aborts the ramp outright. But
+   also compare the counts *across* A, B and C: the subtraction is only valid if they
+   did the same amount of work. A run with noticeably fewer turns synthesized less
+   speech and called the LLM fewer times, so part of its apparent "saving" is work
+   that simply never happened.
+2. **The SUSPECT warning.** If run `A` barely exceeded the idle floor, the caller
+   published little or nothing and the rows are suspect. A live call runs STT
+   streaming, an LLM turn and TTS synthesis; it cannot cost almost nothing.
+3. **The restart column.** A non-zero change means the worker crashed mid-run,
    resetting `process_cpu_seconds_total` — that row is void too. The harness pins
    `restart: "no"` to make crashes visible rather than self-healing.
-3. **Pinned models.** `config/config.go` defaults differ from `.env.example`
+4. **Pinned models.** `config/config.go` defaults differ from `.env.example`
    (`saaras:v4` vs `saaras:v3`, `bulbul:v2`/`anushka` vs `bulbul:v3`/`shubh`,
    `gemini-2.5-flash` vs `gemini-3.1-flash-lite`). Whichever wins, it must be the
    **same across all four runs** — a different TTS model is a different amount of
