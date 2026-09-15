@@ -125,6 +125,41 @@ Then: **the addressable share bounds what a Go rewrite can win on CPU.** It does
 bound the memory win, which is separate and larger — Node costs 258 MB/call and
 goroutine-per-session plausibly reaches low double digits.
 
+## Node baseline (`bench/node-baseline.sh`)
+
+Go's N=1 ablation number has nothing honest to compare against on its own — the
+only Node figure on record is 7.07 calls/core from 85 concurrent calls at
+saturation, where fixed per-process cost amortizes across a loaded box. This
+script measures Node the same way `bench/ablate.sh` measured Go: one process, one
+call, the same `caller.ogg`.
+
+**Node forks a separate OS process per job.** Sampling one PID would measure only
+the pm2-style supervisor and silently undercount. This script wraps the whole
+process tree in a `systemd-run --scope` cgroup and reads that cgroup's own
+`cpu.stat` — it aggregates every process in the tree automatically, including ones
+forked after the measurement window starts.
+
+Needs the `NUM_IDLE_PROCESSES` override committed to `agent-starter-node`'s
+`src/main.ts` alongside this script (default stays 16 everywhere else — this run
+uses 1, since 16 idle V8 processes each carry a baseline cost large enough to
+distort the floor being measured), and cgroup v2 (`/sys/fs/cgroup/cgroup.controllers`
+must exist).
+
+```bash
+export NODE_AGENT_DIR=/root/agent-starter-node   # the checkout with BENCHMARK_MODE
+export LIVEKIT_URL=... LIVEKIT_API_KEY=... LIVEKIT_API_SECRET=...
+export CALLER_AUDIO=/root/go-agent-worker/bench/caller.ogg   # SAME file as ablate.sh
+
+pm2 stop survey-agent   # the script refuses to start otherwise
+bash bench/node-baseline.sh
+```
+
+Reads `idle` and `call` rows against Go's from `bench/ablate.sh`. If Node's idle
+cost lands near Go's ~0.13 cores/call, both stacks pay the same WebRTC/media floor
+and there's no CPU advantage left for Go to find there. If Node's is near zero,
+Go is carrying a fixable per-track cost — see `bench/README.md`'s own
+`summary.md` output for the worked comparison.
+
 ## What this does not measure
 
 - **Anything comparable to the Node baseline yet.** Node runs
