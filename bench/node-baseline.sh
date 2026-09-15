@@ -15,7 +15,7 @@
 # starts. Requires cgroup v2 (the unified hierarchy; Debian 12 defaults to it).
 #
 # Two configs, matching bench/ablate.sh's naming:
-#   idle - Node joins a room via automatic dispatch, speaks its unprompted
+#   idle - Node joins a room via `lk dispatch create`, speaks its unprompted
 #          greeting, then sits with no caller. Isolates whatever WebRTC/media
 #          floor Node pays on its own audio-publish path - the same question the
 #          Go ablation answered for the Go worker, where it turned out to be
@@ -165,10 +165,20 @@ for run in $RUNS; do
   done
   echo "  worker healthy"
 
-  # Creating the room triggers automatic dispatch to $AGENT_NAME. `lk room join`
-  # has no --agent-name flag (unlike `lk perf agent-load-test`); this relies on
-  # the project's default automatic-dispatch behaviour, same as every prior
-  # benchmark run in this project against this same worker.
+  # `lk room join` alone does not request dispatch - confirmed the hard way: the
+  # worker registered fine but entry() was never called, because nothing had ever
+  # actually asked LiveKit to send it a job. Every prior benchmark run in this
+  # project that got dispatch working did so through `lk perf agent-load-test
+  # --agent-name`, which sets this up internally. `lk room join` has no equivalent
+  # flag, so the explicit call below is required - `lk dispatch create` is the
+  # same mechanism agent-load-test uses, just invoked directly.
+  DISPATCH_LOG="$OUT_DIR/$run-dispatch.log"
+  if ! "$LK" dispatch create --room "$room" --agent-name "$AGENT_NAME" --yes \
+      >"$DISPATCH_LOG" 2>&1; then
+    echo "  FAIL 'lk dispatch create' failed - see $DISPATCH_LOG" >&2
+    exit 1
+  fi
+
   if [ "$with_call" -eq 1 ]; then
     ( "$LK" room join --identity bench-caller --publish "$CALLER_AUDIO" "$room" \
         >"$CALLER_LOG" 2>&1 ) &
@@ -178,16 +188,16 @@ for run in $RUNS; do
   fi
   CALLER_PID=$!
 
-  # Fail fast if dispatch never happens, rather than measuring an undispatched
-  # worker for the full settle+duration window - the exact failure bench/ablate.sh
-  # hit once already, just one layer up the stack here (dispatch, not publish).
+  # Confirms the explicit dispatch above actually reached entry() - not a second
+  # dispatch mechanism, just verification, kept from the original implicit-dispatch
+  # attempt. Fails fast rather than measuring an undispatched worker for the full
+  # settle+duration window, the same failure bench/ablate.sh hit once already at
+  # the publish layer instead of the dispatch layer.
   deadline=$((SECONDS + 20))
   until grep -q "survey-agent starting" "$WORKER_LOG" 2>/dev/null; do
     if [ "$SECONDS" -ge "$deadline" ]; then
-      echo "  FAIL no job dispatched to $AGENT_NAME within 20s of room '$room'" >&2
-      echo "       being created. Check $WORKER_LOG, and confirm this LiveKit" >&2
-      echo "       project has no explicit dispatch rule restricting automatic" >&2
-      echo "       dispatch." >&2
+      echo "  FAIL 'lk dispatch create' returned success but no job reached" >&2
+      echo "       entry() within 20s. Check $WORKER_LOG and $DISPATCH_LOG." >&2
       exit 1
     fi
     sleep 1

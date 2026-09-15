@@ -145,6 +145,24 @@ uses 1, since 16 idle V8 processes each carry a baseline cost large enough to
 distort the floor being measured), and cgroup v2 (`/sys/fs/cgroup/cgroup.controllers`
 must exist).
 
+**Dispatch is explicit, via `lk dispatch create --room <room> --agent-name
+survey-agent`** — confirmed the hard way on the first real run: plain `lk room
+join` registers a participant but never asks LiveKit to send the worker a job, so
+the worker sits registered forever and `entry()` never fires. Every prior
+benchmark in this project that got dispatch working went through `lk perf
+agent-load-test --agent-name`, which does this internally; `lk room join` has no
+equivalent flag. The script calls `lk dispatch create` itself — nothing extra to
+run by hand.
+
+**Make sure `NODE_AGENT_DIR` points at a checkout with `BENCHMARK_MODE` support
+and the `NUM_IDLE_PROCESSES` override** — if your production checkout tracks a
+different branch than your feature work, `git branch --show-current` there before
+trusting a `git pull`; a pull only fast-forwards the *checked-out* branch; it will
+report "Already up to date" while silently leaving a different branch's commits
+sitting unfetched-into. Cloning a fresh copy of the right branch into its own
+directory, rather than switching branches inside a directory pm2 already points
+at, avoids the risk of pm2 resurrecting production against the wrong code later.
+
 ```bash
 export NODE_AGENT_DIR=/root/agent-starter-node   # the checkout with BENCHMARK_MODE
 export LIVEKIT_URL=... LIVEKIT_API_KEY=... LIVEKIT_API_SECRET=...
